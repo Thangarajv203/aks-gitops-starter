@@ -1,0 +1,66 @@
+name: build-and-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "helm/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # needed for OIDC login to Azure
+  contents: read
+
+env:
+  ACR_NAME: ${{ vars.ACR_NAME }}
+  AKS_NAME: ${{ vars.AKS_NAME }}
+  RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+  IMAGE_NAME: aks-starter-app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC, no stored secret)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push image to ACR
+        run: |
+          az acr login --name "$ACR_NAME"
+          LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
+          IMAGE_REPO="$LOGIN_SERVER/$IMAGE_NAME"
+          docker build -t "$IMAGE_REPO:$GITHUB_SHA" app/
+          docker push "$IMAGE_REPO:$GITHUB_SHA"
+          echo "IMAGE_REPO=$IMAGE_REPO" >> "$GITHUB_ENV"
+
+      - name: Install kubectl and kubelogin
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          az aks install-cli \
+            --install-location "$HOME/.local/bin/kubectl" \
+            --kubelogin-install-location "$HOME/.local/bin/kubelogin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Get AKS credentials (Entra ID auth)
+        run: |
+          az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install app helm/app \
+            --set image.repository="$IMAGE_REPO" \
+            --set image.tag="$GITHUB_SHA" \
+            --wait --timeout 5m
+          kubectl get svc app

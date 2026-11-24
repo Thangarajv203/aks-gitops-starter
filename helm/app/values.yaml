@@ -1,0 +1,19 @@
+replicaCount: 2
+
+image:
+  # Overridden by the pipeline with --set image.repository and --set image.tag
+  repository: example.azurecr.io/aks-starter-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  port: 80
+  targetPort: 8080
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

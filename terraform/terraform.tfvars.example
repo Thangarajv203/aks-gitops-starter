@@ -1,0 +1,2 @@
+# Copy to terraform.tfvars and set a globally unique ACR name.
+acr_name = "replaceme12345acr"
